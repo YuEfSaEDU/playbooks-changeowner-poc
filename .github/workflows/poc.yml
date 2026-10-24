@@ -59,4 +59,5 @@ jobs:
           ./build/bin/manifest apply
           cp ../change_owner_channel_test.go server/app/
           cp ../change_owner_channel_integration_test.go server/
-          go test ./server -run TestChangeOwner_NonChannelMemberTeamUser -v
+          cp ../public_playbook_control_test.go server/
+          go test ./server -run 'TestChangeOwner_NonChannelMemberTeamUser|TestPublicPlaybookPreChangeControl' -v
