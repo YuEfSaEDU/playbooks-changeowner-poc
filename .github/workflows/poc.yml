@@ -8,14 +8,14 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  unit:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: "1.27"
-      - name: Clone pinned Playbooks and run proof
+      - name: Clone pinned Playbooks and run unit proof
         run: |
           git clone --filter=blob:none --no-checkout https://github.com/mattermost/mattermost-plugin-playbooks.git upstream
           cd upstream
@@ -23,3 +23,40 @@ jobs:
           git checkout FETCH_HEAD
           cp ../change_owner_channel_test.go server/app/
           go test ./server/app -run 'TestChangeOwnerAllowsNonChannelMemberTeamUser|TestRunChangeOwner' -v
+
+  integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: mmuser
+          POSTGRES_PASSWORD: mostest
+          POSTGRES_DB: mattermost_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mmuser -d mattermost_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      TEST_DATABASE_DRIVERNAME: postgres
+      TEST_DATABASE_POSTGRESQL_DSN: postgres://mmuser:mostest@localhost:5432/mattermost_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+      - name: Clone pinned Playbooks and run live API proof
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/mattermost/mattermost-plugin-playbooks.git upstream
+          cd upstream
+          git fetch --depth 1 origin 1da42cf8cfdd5e838d9e08f0893e7444938d2fc7
+          git checkout FETCH_HEAD
+          (cd build/manifest && go build -o ../bin/manifest .)
+          ./build/bin/manifest apply
+          cp ../change_owner_channel_test.go server/app/
+          cp ../change_owner_channel_integration_test.go server/
+          go test ./server -run TestChangeOwner_NonChannelMemberTeamUser -v
