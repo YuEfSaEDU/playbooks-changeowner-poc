@@ -34,11 +34,24 @@ func TestChangeOwner_NonChannelMemberTeamUser(t *testing.T) {
 		OwnerUserID:     e.AdminUser.Id,
 		TeamID:          e.BasicTeam.Id,
 		ChannelID:       e.BasicPrivateChannel.Id,
-		PlaybookID:      e.BasicPlaybook.ID,
+		PlaybookID:      e.BasicPrivatePlaybook.ID,
 		CreatePublicRun: &createPublicRun,
 	})
 	require.NoError(t, err)
 	require.Equal(t, e.AdminUser.Id, run.OwnerUserID)
+
+	// Negative control: before the owner change, RegularUser2 (team member,
+	// not in the private channel, not a private-playbook member) cannot read
+	// the run.
+	serverClient2 := model.NewAPIv4Client(e.ServerClient.URL)
+	_, _, err = serverClient2.Login(ctx, e.RegularUser2.Email, testUserPassword)
+	require.NoError(t, err)
+	respBefore, errBefore := e.DoPluginAPIRequestWithHeaders(ctx, serverClient2, http.MethodGet, "/api/v0/runs/"+run.ID, "", nil)
+	require.Error(t, errBefore)
+	t.Logf("control: GET /api/v0/runs/%s as RegularUser2 before owner change -> error: %v", run.ID, errBefore)
+	if respBefore != nil {
+		t.Logf("control: HTTP status before owner change: %d", respBefore.StatusCode)
+	}
 
 	// AdminUser is the current owner and a channel member. ChangeOwner validates
 	// only team membership for the new owner, not private-channel membership.
@@ -48,9 +61,6 @@ func TestChangeOwner_NonChannelMemberTeamUser(t *testing.T) {
 
 	// RegularUser2 can now read the run through the API even though they were
 	// never added to the private channel.
-	serverClient2 := model.NewAPIv4Client(e.ServerClient.URL)
-	_, _, err = serverClient2.Login(ctx, e.RegularUser2.Email, testUserPassword)
-	require.NoError(t, err)
 	resp, err := e.DoPluginAPIRequestWithHeaders(ctx, serverClient2, http.MethodGet, "/api/v0/runs/"+run.ID, "", nil)
 	require.NoError(t, err)
 	defer resp.Body.Close()
