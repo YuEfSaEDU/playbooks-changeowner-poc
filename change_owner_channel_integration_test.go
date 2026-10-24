@@ -28,6 +28,9 @@ func TestChangeOwner_NonChannelMemberTeamUser(t *testing.T) {
 	require.Error(t, err, "fixture precondition: RegularUser2 must not be in the private channel")
 	t.Logf("control: GetChannelMember(private=%s, user=%s) -> error: %v", e.BasicPrivateChannel.Id, e.RegularUser2.Id, err)
 
+	_, err = e.PlaybooksAdminClient.Playbooks.CreatePropertyField(ctx, e.BasicPrivatePlaybook.ID, client.PropertyFieldRequest{Name: "ProofField", Type: "text"})
+	require.NoError(t, err)
+
 	createPublicRun := false
 	run, err := e.PlaybooksAdminClient.PlaybookRuns.Create(ctx, client.PlaybookRunCreateOptions{
 		Name:            "Private channel owner change",
@@ -40,6 +43,16 @@ func TestChangeOwner_NonChannelMemberTeamUser(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, e.AdminUser.Id, run.OwnerUserID)
 
+	// Seed data that the new owner should not be able to read before the change.
+	runFields, err := e.PlaybooksAdminClient.PlaybookRuns.GetPropertyFields(ctx, run.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, runFields)
+	fieldID := runFields[0].ID
+	_, err = e.PlaybooksAdminClient.PlaybookRuns.SetPropertyValue(ctx, run.ID, fieldID, client.PropertyValueRequest{Value: json.RawMessage(`"admin-value"`)})
+	require.NoError(t, err)
+	statusErr := e.PlaybooksAdminClient.PlaybookRuns.UpdateStatus(ctx, run.ID, "admin status update", 0)
+	t.Logf("setup: UpdateStatus -> %v", statusErr)
+
 	// Negative control: before the owner change, RegularUser2 (team member,
 	// not in the private channel, not a private-playbook member) cannot read
 	// the run.
@@ -51,6 +64,17 @@ func TestChangeOwner_NonChannelMemberTeamUser(t *testing.T) {
 	t.Logf("control: GET /api/v0/runs/%s as RegularUser2 before owner change -> error: %v", run.ID, errBefore)
 	if respBefore != nil {
 		t.Logf("control: HTTP status before owner change: %d", respBefore.StatusCode)
+	}
+	for _, path := range []string{
+		"/api/v0/runs/" + run.ID + "/status-updates",
+		"/api/v0/runs/" + run.ID + "/property_fields",
+		"/api/v0/runs/" + run.ID + "/property_values",
+	} {
+		resp, err := e.DoPluginAPIRequestWithHeaders(ctx, serverClient2, http.MethodGet, path, "", nil)
+		require.Error(t, err, "control: %s must be denied before owner change", path)
+		if resp != nil {
+			t.Logf("control: GET %s before owner change -> status %d (error: %v)", path, resp.StatusCode, err)
+		}
 	}
 
 	// AdminUser is the current owner and a channel member. ChangeOwner validates
@@ -74,6 +98,29 @@ func TestChangeOwner_NonChannelMemberTeamUser(t *testing.T) {
 	require.Equal(t, e.RegularUser2.Id, raw["owner_user_id"])
 	require.Equal(t, e.BasicPrivateChannel.Id, raw["channel_id"])
 	require.Equal(t, "Private channel owner change", raw["name"])
+
+	for _, path := range []string{
+		"/api/v0/runs/" + run.ID + "/status-updates",
+		"/api/v0/runs/" + run.ID + "/property_fields",
+		"/api/v0/runs/" + run.ID + "/property_values",
+	} {
+		resp, err := e.DoPluginAPIRequestWithHeaders(ctx, serverClient2, http.MethodGet, path, "", nil)
+		require.NoError(t, err)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		resp.Body.Close()
+		t.Logf("GET %s as RegularUser2 after owner change -> %d\n%s", path, resp.StatusCode, string(body))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+	}
+
+	putBody := `{"value":"attacker-set"}`
+	respPut, err := e.DoPluginAPIRequestWithHeaders(ctx, serverClient2, http.MethodPut, "/api/v0/runs/"+run.ID+"/property_fields/"+fieldID+"/value", putBody, map[string]string{"Content-Type": "application/json"})
+	require.NoError(t, err)
+	bodyPut, err := io.ReadAll(respPut.Body)
+	require.NoError(t, err)
+	respPut.Body.Close()
+	t.Logf("PUT /api/v0/runs/%s/property_fields/%s/value as RegularUser2 -> %d\n%s", run.ID, fieldID, respPut.StatusCode, string(bodyPut))
+	require.Equal(t, http.StatusOK, respPut.StatusCode)
 
 	got, err := e.PlaybooksClient2.PlaybookRuns.Get(ctx, run.ID)
 	require.NoError(t, err)
