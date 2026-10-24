@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost-plugin-playbooks/client"
@@ -47,7 +48,10 @@ func TestChangeOwner_NonChannelMemberTeamUser(t *testing.T) {
 
 	// RegularUser2 can now read the run through the API even though they were
 	// never added to the private channel.
-	resp, err := e.DoPluginAPIRequestWithHeaders(ctx, e.PlaybooksClient2, http.MethodGet, "/api/v0/runs/"+run.ID, "", nil)
+	serverClient2 := model.NewAPIv4Client(e.ServerClient.URL)
+	_, _, err = serverClient2.Login(ctx, e.RegularUser2.Email, testUserPassword)
+	require.NoError(t, err)
+	resp, err := e.DoPluginAPIRequestWithHeaders(ctx, serverClient2, http.MethodGet, "/api/v0/runs/"+run.ID, "", nil)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
