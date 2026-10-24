@@ -50,8 +50,9 @@ func TestChangeOwner_NonChannelMemberTeamUser(t *testing.T) {
 	fieldID := runFields[0].ID
 	_, err = e.PlaybooksAdminClient.PlaybookRuns.SetPropertyValue(ctx, run.ID, fieldID, client.PropertyValueRequest{Value: json.RawMessage(`"admin-value"`)})
 	require.NoError(t, err)
-	statusErr := e.PlaybooksAdminClient.PlaybookRuns.UpdateStatus(ctx, run.ID, "admin status update", 0)
-	t.Logf("setup: UpdateStatus -> %v", statusErr)
+	err = e.PlaybooksAdminClient.PlaybookRuns.UpdateStatus(ctx, run.ID, "admin status update", 86400)
+	require.NoError(t, err)
+	t.Logf("setup: status update seeded")
 
 	// Negative control: before the owner change, RegularUser2 (team member,
 	// not in the private channel, not a private-playbook member) cannot read
@@ -121,6 +122,15 @@ func TestChangeOwner_NonChannelMemberTeamUser(t *testing.T) {
 	respPut.Body.Close()
 	t.Logf("PUT /api/v0/runs/%s/property_fields/%s/value as RegularUser2 -> %d\n%s", run.ID, fieldID, respPut.StatusCode, string(bodyPut))
 	require.Equal(t, http.StatusOK, respPut.StatusCode)
+
+	respVals, err := e.DoPluginAPIRequestWithHeaders(ctx, serverClient2, http.MethodGet, "/api/v0/runs/"+run.ID+"/property_values", "", nil)
+	require.NoError(t, err)
+	bodyVals, err := io.ReadAll(respVals.Body)
+	require.NoError(t, err)
+	respVals.Body.Close()
+	t.Logf("GET /api/v0/runs/%s/property_values as RegularUser2 after PUT -> %d\n%s", run.ID, respVals.StatusCode, string(bodyVals))
+	require.Equal(t, http.StatusOK, respVals.StatusCode)
+	require.Contains(t, string(bodyVals), "attacker-set")
 
 	got, err := e.PlaybooksClient2.PlaybookRuns.Get(ctx, run.ID)
 	require.NoError(t, err)
